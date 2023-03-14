@@ -1,16 +1,14 @@
-from django.shortcuts import render
 from django.http import HttpResponseRedirect
-# <HINT> Import any new Models here
-from .models import Course, Enrollment
+from .models import Course, Enrollment, Submission
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404, render, redirect
 from django.urls import reverse
 from django.views import generic
 from django.contrib.auth import login, logout, authenticate
 import logging
+
 # Get an instance of a logger
 logger = logging.getLogger(__name__)
-# Create your views here.
 
 
 def registration_request(request):
@@ -70,7 +68,6 @@ def check_if_enrolled(user, course):
     return is_enrolled
 
 
-# CourseListView
 class CourseListView(generic.ListView):
     template_name = 'onlinecourse/course_list_bootstrap.html'
     context_object_name = 'course_list'
@@ -103,34 +100,54 @@ def enroll(request, course_id):
     return HttpResponseRedirect(reverse(viewname='onlinecourse:course_details', args=(course.id,)))
 
 
-# <HINT> Create a submit view to create an exam submission record for a course enrollment,
-# you may implement it based on following logic:
-         # Get user and course object, then get the associated enrollment object created when the user enrolled the course
-         # Create a submission object referring to the enrollment
-         # Collect the selected choices from exam form
-         # Add each selected choice object to the submission object
-         # Redirect to show_exam_result with the submission id
-#def submit(request, course_id):
+def submit(request, course_id):
+    course = Course.objects.get(id=course_id)
+    enrollment = Enrollment.objects.get(user=request.user, course=course)
+    submitted_answers = extract_answers(request)
+    submission = Submission.objects.create(enrollment=enrollment)
+    submission.choices.set(submitted_answers)
+    submission.save()
+    return HttpResponseRedirect(reverse(viewname='onlinecourse:show_exam_result', args=(course_id, submission.id)))
 
 
-# <HINT> A example method to collect the selected choices from the exam form from the request object
-#def extract_answers(request):
-#    submitted_anwsers = []
-#    for key in request.POST:
-#        if key.startswith('choice'):
-#            value = request.POST[key]
-#            choice_id = int(value)
-#            submitted_anwsers.append(choice_id)
-#    return submitted_anwsers
+def extract_answers(request):
+    submitted_answers = []
+    for key in request.POST:
+        if key.startswith('choice-'):
+            choice_id = int(key[7:])
+            submitted_answers.append(choice_id)
+    return submitted_answers
 
 
-# <HINT> Create an exam result view to check if learner passed exam and show their question results and result for each question,
-# you may implement it based on the following logic:
-        # Get course and submission based on their ids
-        # Get the selected choice ids from the submission record
-        # For each selected choice, check if it is a correct answer or not
-        # Calculate the total score
-#def show_exam_result(request, course_id, submission_id):
+def show_exam_result(request, course_id, submission_id):
+    course = Course.objects.get(id=course_id)
+    submission = Submission.objects.get(id=submission_id)
+    submission_choices = submission.choices.all()
+    correct_choices = []
+    correct, wrong = 0, 0
 
+    for lesson in course.lesson_set.all():
+        for question in lesson.question_set.all():
+            for choice in question.choice_set.all():
+                if choice.is_correct:
+                    correct_choices.append(choice)
 
+    for choice in submission_choices:
+        if choice.is_correct:
+            correct += 1
+        else:
+            wrong += 1
 
+    for choice in correct_choices:
+        if choice not in submission_choices:
+            wrong += 1
+
+    total = 0
+    if correct + wrong == 0:
+        total = 1
+    else:
+        total = correct + wrong
+
+    grade = int(correct / total * 100)
+    context = {'course': course, 'selected_choices': submission_choices, 'grade': grade}
+    return render(request, 'onlinecourse/exam_result_bootstrap.html', context)
